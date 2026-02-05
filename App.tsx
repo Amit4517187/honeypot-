@@ -115,7 +115,7 @@ const App: React.FC = () => {
          
          <div className="flex-1 overflow-hidden p-6">
             {activeTab === 'dashboard' && <Dashboard sessions={sessions} />}
-            {activeTab === 'simulator' && <Simulator onSessionUpdate={handleSessionUpdate} />}
+            {activeTab === 'simulator' && <Simulator sessions={sessions} onSessionUpdate={handleSessionUpdate} />}
             {activeTab === 'api' && <ApiTester onSessionUpdate={handleSessionUpdate} />}
          </div>
       </main>

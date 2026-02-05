@@ -5,14 +5,15 @@ import IntelligenceCard from './IntelligenceCard';
 
 interface SimulatorProps {
   onSessionUpdate: (session: Session) => void;
+  sessions: Session[];
 }
 
-const Simulator: React.FC<SimulatorProps> = ({ onSessionUpdate }) => {
+const Simulator: React.FC<SimulatorProps> = ({ onSessionUpdate, sessions }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [scamDetected, setScamDetected] = useState(false);
-  const [sessionId] = useState(`sim-${Math.random().toString(36).substring(7)}`);
+  const [sessionId, setSessionId] = useState('');
   const [intelligence, setIntelligence] = useState<Intelligence>({
     bankAccounts: [], upiIds: [], phishingLinks: [], phoneNumbers: [], suspiciousKeywords: []
   });
@@ -28,8 +29,30 @@ const Simulator: React.FC<SimulatorProps> = ({ onSessionUpdate }) => {
     scrollToBottom();
   }, [messages]);
 
+  // Load the most recent simulator session on mount
+  useEffect(() => {
+    const lastSimSession = sessions
+        .filter(s => s.id.startsWith('sim-'))
+        .sort((a, b) => new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime())[0];
+
+    if (lastSimSession) {
+        setSessionId(lastSimSession.id);
+        setMessages(lastSimSession.messages);
+        setIntelligence(lastSimSession.extractedIntelligence);
+        setAgentNotes(lastSimSession.agentNotes);
+        if (lastSimSession.status === 'scam_detected') {
+            setScamDetected(true);
+        }
+    } else {
+        setSessionId(`sim-${Math.random().toString(36).substring(7)}`);
+    }
+  }, []); // Run once on mount
+
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isProcessing) return;
+
+    const currentSessionId = sessionId || `sim-${Math.random().toString(36).substring(7)}`;
+    if (!sessionId) setSessionId(currentSessionId);
 
     const newMessage: Message = {
       sender: 'scammer', // User acts as the scammer in simulator
@@ -37,25 +60,26 @@ const Simulator: React.FC<SimulatorProps> = ({ onSessionUpdate }) => {
       timestamp: new Date().toISOString()
     };
 
-    setMessages(prev => [...prev, newMessage]);
+    const nextMessages = [...messages, newMessage];
+    setMessages(nextMessages);
     setInputValue('');
     setIsProcessing(true);
 
     try {
       // 1. Detect Scam
-      const detection = await detectScamIntent(newMessage.text, messages);
+      const detection = await detectScamIntent(newMessage.text, nextMessages);
       
+      let isScam = detection.isScam || scamDetected;
       if (detection.isScam) {
         setScamDetected(true);
       }
 
-      // 2. Generate Reply (if detected or force reply for demo purposes)
-      // For the simulator, we always reply to keep the flow, but label it based on detection
+      // 2. Generate Reply
       let replyText = "";
-      if (detection.isScam || scamDetected) {
-         replyText = await generateAgentReply(newMessage.text, messages);
+      if (isScam) {
+         replyText = await generateAgentReply(newMessage.text, nextMessages);
       } else {
-         replyText = "I don't understand. Who is this?"; // Default 'user' response if not scam yet
+         replyText = "I don't understand. Who is this?"; // Default 'user' response
       }
 
       const agentMessage: Message = {
@@ -64,26 +88,31 @@ const Simulator: React.FC<SimulatorProps> = ({ onSessionUpdate }) => {
         timestamp: new Date().toISOString()
       };
 
-      const updatedHistory = [...messages, newMessage, agentMessage];
+      const updatedHistory = [...nextMessages, agentMessage];
       setMessages(updatedHistory);
 
-      // 3. Extract Intelligence continuously
-      if (detection.isScam || scamDetected) {
+      // 3. Extract Intelligence & Update Session
+      let currentIntelligence = intelligence;
+      let currentNotes = agentNotes;
+
+      if (isScam) {
         const extraction = await extractIntelligence(updatedHistory);
-        setIntelligence(extraction.intelligence);
-        setAgentNotes(extraction.notes);
-        
-        // Update Session History
-        onSessionUpdate({
-            id: sessionId,
-            status: 'scam_detected',
-            messages: updatedHistory,
-            scamConfidence: detection.confidence,
-            extractedIntelligence: extraction.intelligence,
-            agentNotes: extraction.notes,
-            lastUpdated: new Date().toISOString()
-        });
+        currentIntelligence = extraction.intelligence;
+        currentNotes = extraction.notes;
+        setIntelligence(currentIntelligence);
+        setAgentNotes(currentNotes);
       }
+
+      // Update Session History (Persist safe and scam sessions)
+      onSessionUpdate({
+          id: currentSessionId,
+          status: isScam ? 'scam_detected' : 'active',
+          messages: updatedHistory,
+          scamConfidence: detection.confidence,
+          extractedIntelligence: currentIntelligence,
+          agentNotes: currentNotes,
+          lastUpdated: new Date().toISOString()
+      });
 
     } catch (error) {
       console.error("Error in simulation flow", error);
@@ -100,13 +129,27 @@ const Simulator: React.FC<SimulatorProps> = ({ onSessionUpdate }) => {
         <div className="bg-gray-900 p-4 border-b border-gray-700 flex justify-between items-center">
           <div>
             <h2 className="text-white font-bold flex items-center">
-              <span className="w-2 h-2 rounded-full bg-red-500 mr-2 animate-pulse"></span>
+              <span className={`w-2 h-2 rounded-full mr-2 ${scamDetected ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`}></span>
               Live Scam Simulation
             </h2>
             <p className="text-xs text-gray-400">Session ID: {sessionId}</p>
           </div>
-          <div className={`px-3 py-1 rounded text-xs font-bold border ${scamDetected ? 'bg-red-900/50 border-red-500 text-red-400' : 'bg-green-900/50 border-green-500 text-green-400'}`}>
-            {scamDetected ? 'SCAM DETECTED' : 'MONITORING'}
+          <div className="flex gap-2">
+            <button 
+                onClick={() => {
+                    setSessionId(`sim-${Math.random().toString(36).substring(7)}`);
+                    setMessages([]);
+                    setScamDetected(false);
+                    setIntelligence({ bankAccounts: [], upiIds: [], phishingLinks: [], phoneNumbers: [], suspiciousKeywords: [] });
+                    setAgentNotes('');
+                }}
+                className="px-3 py-1 rounded text-xs font-bold border border-gray-600 hover:bg-gray-700 text-gray-300 transition-colors"
+            >
+                NEW SESSION
+            </button>
+            <div className={`px-3 py-1 rounded text-xs font-bold border ${scamDetected ? 'bg-red-900/50 border-red-500 text-red-400' : 'bg-green-900/50 border-green-500 text-green-400'}`}>
+                {scamDetected ? 'SCAM DETECTED' : 'MONITORING'}
+            </div>
           </div>
         </div>
 
